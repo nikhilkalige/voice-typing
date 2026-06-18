@@ -1,0 +1,19 @@
+[Unit]
+Description=Voice Typing (push-to-talk dictation)
+After=graphical-session.target pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# %h is the user's home; adjust WorkingDirectory if you cloned elsewhere.
+WorkingDirectory=%h/workspace/python/voice-typing
+ExecStart=%h/workspace/python/voice-typing/run.sh
+Restart=on-failure
+RestartSec=2
+# The X11 key grab and notify-send both need the graphical session. If the user manager
+# didn't already import these (gnome-session usually does), run once:
+#   systemctl --user import-environment DISPLAY XAUTHORITY
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=graphical-session.target
