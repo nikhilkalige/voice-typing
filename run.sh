@@ -17,4 +17,4 @@ PY
 )"
 export LD_LIBRARY_PATH="${NV_LIBS}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-exec uv run python voicetype.py
+exec uv run python -m voicetype

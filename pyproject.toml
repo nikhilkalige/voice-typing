@@ -5,6 +5,7 @@ description = "Minimal local push-to-talk voice typing: hold a key, speak, relea
 requires-python = ">=3.11"
 dependencies = [
     "faster-whisper>=1.1.0",
+    "moonshine-voice>=0.0.62",
     "soundcard>=0.4.3",
     "python-xlib>=0.33",
     "numpy>=2.0.0",
