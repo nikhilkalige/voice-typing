@@ -1,5 +1,10 @@
 # Streaming via LocalAgreement-2, append-only (no backspacing)
 
+> **Status: superseded by [ADR-0004](./0004-nemotron-streaming-via-parakeet-cpp.md).** The
+> Whisper engine and LocalAgreement-2 have been removed. Parakeet's cache-aware streaming
+> model makes append-only output intrinsic — no prefix-guard machinery is needed.
+> This ADR is retained for historical context.
+
 While the PTT chord is held we re-transcribe the growing audio buffer every ~450 ms and
 type words incrementally. A word is committed only once it appears in the same position in
 **two consecutive** transcriptions (LocalAgreement-2). Output is **append-only**: we never
@@ -27,8 +32,7 @@ re-segmentation can stall output but can never corrupt what was already typed.
 sometimes transcribes only the text *after* the prompt, so the final pass returned the tail
 without the committed prefix, the prefix guard blocked it, and only the streamed prefix got
 typed (e.g. just " Why is" of a full sentence). Every pass now transcribes the whole buffer
-with no prompt; LocalAgreement-2 alone provides the cross-run stability. Regression-tested
-in `test_finalize_gpu.py`.
+with no prompt; LocalAgreement-2 alone provides the cross-run stability.
 
 ## Consequences
 
