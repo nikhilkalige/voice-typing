@@ -11,31 +11,12 @@ import threading
 
 from Xlib import X, XK, display
 
-from .config import CONTROL_FIFO, NOTIFY, PTT_KEYSYM, PTT_MODS, TOGGLE
+from .config import Config
 from .parakeet import ParakeetDictation, ParakeetEngine
+from .ptt import PttStateMachine
 from .typist import Typist
 
 log = logging.getLogger(__name__)
-
-
-def notify(body: str) -> None:
-    """Fire-and-forget desktop notification — never blocks the hot path."""
-    if not NOTIFY:
-        return
-    try:
-        subprocess.Popen(
-            [
-                "notify-send",
-                "-t", "1000",
-                "-h", "string:x-canonical-private-synchronous:voicetype",
-                "Voice Typing",
-                body,
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        pass
 
 
 MOD_MAP = {
@@ -61,27 +42,46 @@ def parse_mods(spec: str) -> int:
     return mask
 
 
-def main() -> int:
+def main(cfg: Config) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
 
+    def notify(body: str) -> None:
+        """Fire-and-forget desktop notification — never blocks the hot path."""
+        if not cfg.output.notify:
+            return
+        try:
+            subprocess.Popen(
+                [
+                    "notify-send",
+                    "-t", "1000",
+                    "-h", "string:x-canonical-private-synchronous:voicetype",
+                    "Voice Typing",
+                    body,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            pass
+
     try:
         d = display.Display()
     except Exception as e:  # no DISPLAY, or not an X11 session
         raise SystemExit(f"cannot connect to X display ({e}); is DISPLAY set / are you on X11?")
     root = d.screen().root
-    keysym = XK.string_to_keysym(PTT_KEYSYM)
+    keysym = XK.string_to_keysym(cfg.ptt.keysym)
     keycode = d.keysym_to_keycode(keysym) if keysym else 0
     if not keycode:
-        raise SystemExit(f"cannot resolve key {PTT_KEYSYM!r} to a keycode")
-    base_mask = parse_mods(PTT_MODS)
+        raise SystemExit(f"cannot resolve key {cfg.ptt.keysym!r} to a keycode")
+    base_mask = parse_mods(cfg.ptt.mods)
 
     # Load the model before grabbing keys, so we're ready when the first press arrives.
-    typist = Typist()
-    engine = ParakeetEngine()
+    typist = Typist(pipe=cfg.output.dotool_pipe)
+    engine = ParakeetEngine(cfg)
     notify("Ready")
 
     grab_ok = True
@@ -97,23 +97,25 @@ def main() -> int:
         )
     d.sync()
     if not grab_ok:
-        raise SystemExit(f"could not grab {PTT_MODS}+{PTT_KEYSYM} (already bound by another app?)")
+        raise SystemExit(
+            f"could not grab {cfg.ptt.mods}+{cfg.ptt.keysym} (already bound by another app?)"
+        )
 
-    mode = "parakeet " + ("toggle" if TOGGLE else "hold")
-    verb = "tap to start/stop" if TOGGLE else "hold to talk"
-    log.info("grabbed %s+%s (keycode %d); %s [%s]", PTT_MODS, PTT_KEYSYM, keycode, verb, mode)
+    mode = "parakeet " + ("toggle" if cfg.ptt.toggle else "hold")
+    verb = "tap to start/stop" if cfg.ptt.toggle else "hold to talk"
+    log.info("grabbed %s+%s (keycode %d); %s [%s]", cfg.ptt.mods, cfg.ptt.keysym, keycode, verb, mode)
 
     # Control FIFO — writers send "toggle\n", "start\n", or "stop\n".
     # A daemon thread does the blocking open-per-connection reads and drops
     # commands onto ctrl_queue; the main loop drains it each iteration.
-    if not os.path.exists(CONTROL_FIFO):
-        os.mkfifo(CONTROL_FIFO)
-    log.info("control FIFO: %s", CONTROL_FIFO)
+    if not os.path.exists(cfg.output.control_fifo):
+        os.mkfifo(cfg.output.control_fifo)
+    log.info("control FIFO: %s", cfg.output.control_fifo)
     ctrl_queue: queue.Queue[str] = queue.Queue()
 
     def _fifo_reader() -> None:
         while True:
-            with open(CONTROL_FIFO) as f:   # blocks until a writer connects
+            with open(cfg.output.control_fifo) as f:   # blocks until a writer connects
                 for line in f:
                     cmd = line.strip()
                     if cmd:
@@ -124,16 +126,16 @@ def main() -> int:
 
     x_fd = d.fileno()
 
+    sm = PttStateMachine(toggle=cfg.ptt.toggle)
     session: ParakeetDictation | None = None
     session_no = 0
     pending = None  # one-event lookahead buffer for auto-repeat detection
-    last_toggle_ms = 0  # debounce toggles against auto-repeat / double events
 
     def start_session():
         nonlocal session, session_no
         session_no += 1
         log.info("session #%d start", session_no)
-        session = ParakeetDictation(engine, typist, session_no)
+        session = ParakeetDictation(engine, typist, session_no, cfg=cfg)
         session.start()
         notify("● Listening…")
 
@@ -144,6 +146,12 @@ def main() -> int:
         session.request_stop()  # the session thread finalizes + types asynchronously
         session = None
         notify("Transcribing…")
+
+    def dispatch(action: str | None) -> None:
+        if action == "start":
+            start_session()
+        elif action == "stop":
+            stop_session()
 
     while True:
         # --- Control queue: drain before blocking on X ---
@@ -173,21 +181,13 @@ def main() -> int:
         if getattr(ev, "detail", None) != keycode:
             continue
         if ev.type == X.KeyPress:
-            if TOGGLE:
-                # A genuine tap toggles; debounce so a held key's auto-repeat can't
-                # rapidly start/stop (ev.time is the X server clock in ms).
-                if ev.time - last_toggle_ms >= 300:
-                    last_toggle_ms = ev.time
-                    stop_session() if session is not None else start_session()
-            elif session is None:
-                start_session()
+            dispatch(sm.handle("press", ev.time, session is not None))
         elif ev.type == X.KeyRelease:
             # Held keys auto-repeat as a KeyRelease immediately followed by a KeyPress with
             # an identical timestamp. Peek one event to tell repeat from a real release.
             if d.pending_events() > 0:
                 nxt = d.next_event()
                 if nxt.type == X.KeyPress and nxt.detail == keycode and nxt.time == ev.time:
-                    continue  # auto-repeat: ignore (keep holding / don't re-toggle)
+                    continue  # auto-repeat: strip before reaching the state machine
                 pending = nxt  # unrelated event; handle on the next iteration
-            if not TOGGLE and session is not None:
-                stop_session()  # hold mode: release ends the utterance
+            dispatch(sm.handle("release", ev.time, session is not None))

@@ -7,15 +7,14 @@ import logging
 import os
 import threading
 
-from .config import DOTOOL_PIPE
-
 log = logging.getLogger(__name__)
 
 
 class Typist:
     """Writes `type` actions to the FIFO that dotoold reads."""
 
-    def __init__(self) -> None:
+    def __init__(self, pipe: str = "/tmp/dotool-pipe") -> None:
+        self._pipe = pipe
         self._lock = threading.Lock()
 
     def type(self, text: str) -> None:
@@ -27,9 +26,9 @@ class Typist:
             try:
                 # O_NONBLOCK so we fail fast (ENXIO) instead of hanging if dotoold isn't
                 # reading; then clear it so the write itself completes normally.
-                fd = os.open(DOTOOL_PIPE, os.O_WRONLY | os.O_NONBLOCK)
+                fd = os.open(self._pipe, os.O_WRONLY | os.O_NONBLOCK)
             except OSError as e:
-                log.error("cannot open %s (%s); is dotoold running?", DOTOOL_PIPE, e)
+                log.error("cannot open %s (%s); is dotoold running?", self._pipe, e)
                 return
             try:
                 fcntl.fcntl(fd, fcntl.F_SETFL,

@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from .config import DEFAULT_MODEL_NAME, PARAKEET_MODEL
+from .config import DEFAULT_MODEL_NAME, Config
 
 # HuggingFace repo that publishes all parakeet-cpp GGUF variants.
 _HF_REPO = "mudler/parakeet-cpp-gguf"
@@ -29,8 +29,8 @@ def _progress(count: int, block: int, total: int) -> None:
     sys.stdout.flush()
 
 
-def download_model(dest: Path | None = None) -> None:
-    target = Path(dest) if dest else Path(PARAKEET_MODEL)
+def download_model(cfg: Config, dest: Path | None = None) -> None:
+    target = Path(dest) if dest else Path(cfg.parakeet.model)
 
     if target.exists():
         print(f"Already cached: {target}")

@@ -10,10 +10,11 @@ import logging
 import re
 import threading
 import time
+from typing import Protocol
 
 import numpy as np
 
-from .config import LANGUAGE, PARAKEET_LIB, PARAKEET_MODEL, SAMPLE_RATE, TAIL_MS
+from .config import Config, SAMPLE_RATE
 from .typist import Typist
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,29 @@ log = logging.getLogger(__name__)
 _TAG_RE = re.compile(r"<[^>]*>")
 
 
+class _Rec(Protocol):
+    def record(self, numframes: int) -> np.ndarray: ...
+
+
+class AudioSource(Protocol):
+    def __enter__(self) -> _Rec: ...
+    def __exit__(self, *args: object) -> None: ...
+
+
+class MicSource:
+    """Default AudioSource: opens the system default microphone via soundcard/libpulse."""
+
+    def __enter__(self) -> _Rec:
+        import soundcard
+        self._ctx = soundcard.default_microphone().recorder(
+            samplerate=SAMPLE_RATE, channels=1, blocksize=SAMPLE_RATE // 10,
+        )
+        return self._ctx.__enter__()
+
+    def __exit__(self, *args: object) -> None:
+        self._ctx.__exit__(*args)
+
+
 class ParakeetEngine:
     """Loads libparakeet.so + a streaming GGUF once via ctypes. The model context
     outlives individual streams; each utterance opens its own stream (begin → feed* →
@@ -30,9 +54,9 @@ class ParakeetEngine:
 
     EOU_BIT, EOB_BIT = 1, 2  # *eou_out bitmask from parakeet_capi_stream_feed (ABI v5)
 
-    def __init__(self) -> None:
-        log.info("loading parakeet lib %s ...", PARAKEET_LIB)
-        lib = ctypes.CDLL(PARAKEET_LIB, mode=ctypes.RTLD_GLOBAL)
+    def __init__(self, cfg: Config) -> None:
+        log.info("loading parakeet lib %s ...", cfg.parakeet.lib)
+        lib = ctypes.CDLL(cfg.parakeet.lib, mode=ctypes.RTLD_GLOBAL)
         c_float_p, c_int_p = ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int)
         lib.parakeet_capi_load.restype = ctypes.c_void_p
         lib.parakeet_capi_load.argtypes = [ctypes.c_char_p]
@@ -50,11 +74,12 @@ class ParakeetEngine:
         lib.parakeet_capi_free_string.argtypes = [ctypes.c_void_p]
         self._lib = lib
         self._lock = threading.Lock()
+        self._language = cfg.engine.language
 
         t0 = time.time()
-        self._ctx = lib.parakeet_capi_load(PARAKEET_MODEL.encode())
+        self._ctx = lib.parakeet_capi_load(cfg.parakeet.model.encode())
         if not self._ctx:
-            raise SystemExit(f"parakeet_capi_load failed for {PARAKEET_MODEL}")
+            raise SystemExit(f"parakeet_capi_load failed for {cfg.parakeet.model}")
         # Warm up: run a short silent stream so the first real utterance doesn't pay
         # CUDA kernel/allocator init cost mid-speech.
         try:
@@ -67,7 +92,7 @@ class ParakeetEngine:
         log.info("parakeet model ready in %.1fs", time.time() - t0)
 
     def begin(self) -> int:
-        s = self._lib.parakeet_capi_stream_begin_lang(self._ctx, LANGUAGE.encode())
+        s = self._lib.parakeet_capi_stream_begin_lang(self._ctx, self._language.encode())
         if not s:
             err = self._lib.parakeet_capi_last_error(self._ctx)
             raise RuntimeError(f"stream_begin failed: {err.decode() if err else '?'}")
@@ -103,20 +128,28 @@ class ParakeetEngine:
 
 
 class ParakeetDictation(threading.Thread):
-    """One utterance via parakeet.cpp cache-aware streaming. Captures the mic itself
-    (no separate Recorder), feeds 16 kHz mono float32 blocks to the stream, and types
-    each chunk of newly-finalized text as it arrives. Output is append-only by
-    construction — the engine only ever returns finalized text and never revises it, so
-    unlike Whisper there is no LocalAgreement/prefix-guard machinery. On release, a final
-    pass feeds a short tail and finalizes."""
+    """One utterance via parakeet.cpp cache-aware streaming. Feeds 16 kHz mono float32
+    blocks from an AudioSource to the stream and types each chunk of newly-finalized text
+    as it arrives. Output is append-only by construction — the engine only ever returns
+    finalized text and never revises it. On release, a final pass feeds a short tail and
+    finalizes. Default source is MicSource(); inject a WavSource for testing."""
 
     CHUNK = SAMPLE_RATE // 10  # 100 ms blocks
 
-    def __init__(self, engine: ParakeetEngine, typist: Typist, sid: int) -> None:
+    def __init__(
+        self,
+        engine: ParakeetEngine,
+        typist: Typist,
+        sid: int,
+        source: AudioSource | None = None,
+        cfg: Config | None = None,
+    ) -> None:
         super().__init__(daemon=True)
         self._engine = engine
         self._typist = typist
         self._sid = sid
+        self._source: AudioSource = source if source is not None else MicSource()
+        self._tail_ms: int = cfg.audio.tail_ms if cfg is not None else 120
         self._halt = threading.Event()
         self._typed_any = False
         self._t0 = time.time()
@@ -136,18 +169,16 @@ class ParakeetDictation(threading.Thread):
         return text
 
     def run(self) -> None:
-        import soundcard
         stream = self._engine.begin()
         out: list[str] = []
         try:
-            mic = soundcard.default_microphone()
-            with mic.recorder(samplerate=SAMPLE_RATE, channels=1, blocksize=self.CHUNK) as rec:
+            with self._source as rec:
                 while not self._halt.is_set():
                     block = rec.record(numframes=self.CHUNK)
                     text, _eou = self._engine.feed(stream, block.reshape(-1))
                     out.append(self._emit(text))
-                if TAIL_MS:  # grab + feed a short tail so trailing consonants aren't cut
-                    block = rec.record(numframes=int(SAMPLE_RATE * TAIL_MS / 1000))
+                if self._tail_ms:  # grab + feed a short tail so trailing consonants aren't cut
+                    block = rec.record(numframes=int(SAMPLE_RATE * self._tail_ms / 1000))
                     text, _eou = self._engine.feed(stream, block.reshape(-1))
                     out.append(self._emit(text))
             out.append(self._emit(self._engine.finalize(stream)))

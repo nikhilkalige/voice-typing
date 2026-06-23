@@ -4,61 +4,97 @@ from __future__ import annotations
 
 import os
 import tomllib
+from dataclasses import dataclass, field
 from pathlib import Path
+
+# Fixed constants — not user-configurable; changing them would break the engine.
+SAMPLE_RATE: int = 16_000
+DEFAULT_MODEL_NAME = "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 
 
-def _load() -> dict:
-    xdg = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
-    path = Path(xdg) / "voicetype" / "config.toml"
-    if not path.exists():
-        return {}
-    with path.open("rb") as f:
-        return tomllib.load(f)
+@dataclass
+class PttConfig:
+    keysym: str = "F14"
+    mods: str = ""
+    toggle: bool = True
 
 
-_cfg = _load()
+@dataclass
+class EngineConfig:
+    language: str = "en"
 
 
-def _get(section: str, key: str, default):
-    return _cfg.get(section, {}).get(key, default)
+@dataclass
+class ParakeetConfig:
+    lib: str = ""
+    model: str = ""
 
 
-# Push-to-talk chord — see docs/adr/0002
-# PTT_KEYSYM: str = _get("ptt", "keysym", "t")    # X keysym name: "t", "F13", "space", …
-# PTT_MODS: str   = _get("ptt", "mods", "alt")    # comma list: "alt", "alt,ctrl", …
-PTT_KEYSYM: str = _get("ptt", "keysym", "F14")    # X keysym name: "t", "F13", "space", …
-PTT_MODS: str   = _get("ptt", "mods", "")    # comma list: "alt", "alt,ctrl", …
-TOGGLE: bool    = _get("ptt", "toggle", True)   # True = tap to start/stop; False = hold
+@dataclass
+class AudioConfig:
+    tail_ms: int = 120
 
-# Recognition engine
-LANGUAGE: str = _get("engine", "language", "en")
 
-# Parakeet (parakeet.cpp via ctypes — ggml/GGUF, GPU, no torch)
-PARAKEET_LIB: str   = (
-    os.environ.get("VOICETYPE_PARAKEET_LIB")
-    or _get("parakeet", "lib",
-        str(_PROJECT_ROOT / "parakeet-v0.3.2-lib-linux-cuda-x64" / "libparakeet.so"))
-)
+@dataclass
+class OutputConfig:
+    notify: bool = True
+    dotool_pipe: str = "/tmp/dotool-pipe"
+    control_fifo: str = ""
 
-_xdg_cache = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
-CACHE_DIR: Path = Path(_xdg_cache) / "voicetype"
-DEFAULT_MODEL_NAME = "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"
 
-PARAKEET_MODEL: str = (
-    os.environ.get("VOICETYPE_PARAKEET_MODEL")
-    or _get("parakeet", "model", str(CACHE_DIR / DEFAULT_MODEL_NAME))
-)
+@dataclass
+class Config:
+    ptt: PttConfig = field(default_factory=PttConfig)
+    engine: EngineConfig = field(default_factory=EngineConfig)
+    parakeet: ParakeetConfig = field(default_factory=ParakeetConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
 
-# Audio
-SAMPLE_RATE: int = 16_000   # fixed: what both engines expect
-TAIL_MS: int     = _get("audio", "tail_ms", 120)
-MIN_AUDIO_S: float = 0.30   # don't transcribe buffers shorter than this
+    @classmethod
+    def load(cls) -> Config:
+        xdg_cfg = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
+        path = Path(xdg_cfg) / "voicetype" / "config.toml"
+        raw: dict = {}
+        if path.exists():
+            with path.open("rb") as f:
+                raw = tomllib.load(f)
 
-# Output
-NOTIFY: bool      = _get("output", "notify", True)
-DOTOOL_PIPE: str  = _get("output", "dotool_pipe", "/tmp/dotool-pipe")
+        def _get(section: str, key: str, default):
+            return raw.get(section, {}).get(key, default)
 
-_runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-CONTROL_FIFO: str = _get("output", "control_fifo", f"{_runtime_dir}/voicetype.control")
+        xdg_cache = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
+        cache_dir = Path(xdg_cache) / "voicetype"
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+
+        return cls(
+            ptt=PttConfig(
+                keysym=_get("ptt", "keysym", "F14"),
+                mods=_get("ptt", "mods", ""),
+                toggle=_get("ptt", "toggle", True),
+            ),
+            engine=EngineConfig(
+                language=_get("engine", "language", "en"),
+            ),
+            parakeet=ParakeetConfig(
+                lib=(
+                    os.environ.get("VOICETYPE_PARAKEET_LIB")
+                    or _get("parakeet", "lib", str(
+                        _PROJECT_ROOT / "parakeet-v0.3.2-lib-linux-cuda-x64" / "libparakeet.so"
+                    ))
+                ),
+                model=(
+                    os.environ.get("VOICETYPE_PARAKEET_MODEL")
+                    or _get("parakeet", "model", str(cache_dir / DEFAULT_MODEL_NAME))
+                ),
+            ),
+            audio=AudioConfig(
+                tail_ms=_get("audio", "tail_ms", 120),
+            ),
+            output=OutputConfig(
+                notify=_get("output", "notify", True),
+                dotool_pipe=_get("output", "dotool_pipe", "/tmp/dotool-pipe"),
+                control_fifo=_get("output", "control_fifo", f"{runtime_dir}/voicetype.control"),
+            ),
+        )

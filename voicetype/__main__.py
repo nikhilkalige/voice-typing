@@ -3,7 +3,7 @@ import os
 import sys
 
 from voicetype.app import main
-from voicetype.config import ENGINE
+from voicetype.config import Config
 
 
 def cli():
@@ -21,27 +21,25 @@ def cli():
     )
 
     args = parser.parse_args()
+    cfg = Config.load()
 
     if args.cmd == "download":
         from voicetype.download import download_model
-        download_model(dest=args.dest)
+        download_model(cfg, dest=args.dest)
         return
 
     # Default: run the push-to-talk daemon.
     try:
-        rc = main()
+        rc = main(cfg)
     except KeyboardInterrupt:
         rc = 0
 
-    if ENGINE == "parakeet":
-        # ggml-cuda's static destructors race the CUDA driver teardown on exit
-        # ("driver shutting down" on cudaFree). os._exit skips C++ dtors; the OS
-        # reclaims the GPU context. Safe here — we only tear down at shutdown.
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(rc or 0)
-
-    sys.exit(rc)
+    # ggml-cuda's static destructors race the CUDA driver teardown on exit
+    # ("driver shutting down" on cudaFree). os._exit skips C++ dtors; the OS
+    # reclaims the GPU context. Safe here — we only tear down at shutdown.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc or 0)
 
 
 if __name__ == "__main__":
