@@ -33,15 +33,7 @@ PTT_MODS: str   = _get("ptt", "mods", "")    # comma list: "alt", "alt,ctrl", â€
 TOGGLE: bool    = _get("ptt", "toggle", True)   # True = tap to start/stop; False = hold
 
 # Recognition engine
-ENGINE: str   = _get("engine", "name", "parakeet").lower()
 LANGUAGE: str = _get("engine", "language", "en")
-
-# Whisper (faster-whisper on CUDA)
-MODEL: str        = _get("whisper", "model", "large-v3-turbo")
-COMPUTE_TYPE: str = _get("whisper", "compute_type", "float16")
-DEVICE: str       = _get("whisper", "device", "cuda")
-STREAMING: bool   = _get("whisper", "streaming", True)
-TICK_MS: int      = _get("whisper", "tick_ms", 450)
 
 # Parakeet (parakeet.cpp via ctypes â€” ggml/GGUF, GPU, no torch)
 PARAKEET_LIB: str   = (

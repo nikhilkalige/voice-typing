@@ -7,15 +7,7 @@ mods   = "alt"      # comma-separated: "alt", "alt,ctrl", "" for bare key
 toggle = false      # true = tap to start/stop; false = hold to talk
 
 [engine]
-name     = "whisper"   # "whisper" or "parakeet"
 language = "en"
-
-[whisper]
-model        = "large-v3-turbo"
-compute_type = "float16"
-device       = "cuda"
-streaming    = true    # type words as you speak (LocalAgreement-2)
-tick_ms      = 450     # re-transcription cadence while held (ms)
 
 [parakeet]
 # Paths are auto-detected from the project directory if omitted.

@@ -9,15 +9,6 @@ dependencies = [
     "numpy>=2.0.0",
 ]
 
-[project.optional-dependencies]
-# Pull in the Whisper engine and its CUDA runtime wheels (cuBLAS + cuDNN 9).
-whisper = [
-    "faster-whisper>=1.1.0",
-    "moonshine-voice>=0.0.62",
-    "nvidia-cublas-cu12>=12.3",
-    "nvidia-cudnn-cu12>=9.0",
-]
-
 [project.scripts]
 voicetype = "voicetype.__main__:cli"
 

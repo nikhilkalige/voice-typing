@@ -11,11 +11,9 @@ import threading
 
 from Xlib import X, XK, display
 
-from .audio import Recorder
-from .config import CONTROL_FIFO, ENGINE, NOTIFY, PTT_KEYSYM, PTT_MODS, STREAMING, TOGGLE
+from .config import CONTROL_FIFO, NOTIFY, PTT_KEYSYM, PTT_MODS, TOGGLE
 from .parakeet import ParakeetDictation, ParakeetEngine
 from .typist import Typist
-from .whisper import Dictation, Engine
 
 log = logging.getLogger(__name__)
 
@@ -83,12 +81,7 @@ def main() -> int:
 
     # Load the model before grabbing keys, so we're ready when the first press arrives.
     typist = Typist()
-    if ENGINE == "parakeet":
-        engine: Engine | ParakeetEngine = ParakeetEngine()
-    elif ENGINE == "whisper":
-        engine = Engine()
-    else:
-        raise SystemExit(f"unknown VT_ENGINE {ENGINE!r}; choose 'whisper' or 'parakeet'")
+    engine = ParakeetEngine()
     notify("Ready")
 
     grab_ok = True
@@ -106,9 +99,7 @@ def main() -> int:
     if not grab_ok:
         raise SystemExit(f"could not grab {PTT_MODS}+{PTT_KEYSYM} (already bound by another app?)")
 
-    # Parakeet streams natively; the Whisper STREAMING/on-release distinction is its own.
-    sub = "" if ENGINE == "parakeet" else ("/streaming" if STREAMING else "/on-release")
-    mode = f"{ENGINE} " + ("toggle" if TOGGLE else "hold") + sub
+    mode = "parakeet " + ("toggle" if TOGGLE else "hold")
     verb = "tap to start/stop" if TOGGLE else "hold to talk"
     log.info("grabbed %s+%s (keycode %d); %s [%s]", PTT_MODS, PTT_KEYSYM, keycode, verb, mode)
 
@@ -133,7 +124,7 @@ def main() -> int:
 
     x_fd = d.fileno()
 
-    session: Dictation | ParakeetDictation | None = None  # the current utterance, if any
+    session: ParakeetDictation | None = None
     session_no = 0
     pending = None  # one-event lookahead buffer for auto-repeat detection
     last_toggle_ms = 0  # debounce toggles against auto-repeat / double events
@@ -142,12 +133,7 @@ def main() -> int:
         nonlocal session, session_no
         session_no += 1
         log.info("session #%d start", session_no)
-        if isinstance(engine, ParakeetEngine):
-            session = ParakeetDictation(engine, typist, session_no)  # captures its own mic
-        else:
-            recorder = Recorder()  # fresh per utterance; old session finalizes on its own
-            recorder.start()
-            session = Dictation(engine, recorder, typist, session_no)
+        session = ParakeetDictation(engine, typist, session_no)
         session.start()
         notify("● Listening…")
 
