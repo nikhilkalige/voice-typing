@@ -1,0 +1,60 @@
+{
+  "text": "Open a new terminal window and navigate to the home directory",
+  "tokens": [
+    {
+      "text": "Open",
+      "start": 0.275,
+      "end": 0.625
+    },
+    {
+      "text": "a",
+      "start": 0.625,
+      "end": 0.7375
+    },
+    {
+      "text": "new",
+      "start": 0.7375,
+      "end": 0.9875
+    },
+    {
+      "text": "terminal",
+      "start": 0.9875,
+      "end": 1.45
+    },
+    {
+      "text": "window",
+      "start": 1.45,
+      "end": 2.1875
+    },
+    {
+      "text": "and",
+      "start": 2.1875,
+      "end": 2.35
+    },
+    {
+      "text": "navigate",
+      "start": 2.35,
+      "end": 2.85
+    },
+    {
+      "text": "to",
+      "start": 2.85,
+      "end": 2.9375
+    },
+    {
+      "text": "the",
+      "start": 2.9375,
+      "end": 3.025
+    },
+    {
+      "text": "home",
+      "start": 3.025,
+      "end": 3.25
+    },
+    {
+      "text": "directory",
+      "start": 3.25,
+      "end": 4.175
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "text": "The quick brown fox jumps over the lazy dog",
+  "tokens": [
+    {
+      "text": "The",
+      "start": 0.25,
+      "end": 0.325
+    },
+    {
+      "text": "quick",
+      "start": 0.325,
+      "end": 0.575
+    },
+    {
+      "text": "brown",
+      "start": 0.575,
+      "end": 0.9125
+    },
+    {
+      "text": "fox",
+      "start": 0.9125,
+      "end": 1.4
+    },
+    {
+      "text": "jumps",
+      "start": 1.4,
+      "end": 1.6875
+    },
+    {
+      "text": "over",
+      "start": 1.6875,
+      "end": 1.8625
+    },
+    {
+      "text": "the",
+      "start": 1.8625,
+      "end": 1.975
+    },
+    {
+      "text": "lazy",
+      "start": 1.975,
+      "end": 2.35
+    },
+    {
+      "text": "dog",
+      "start": 2.35,
+      "end": 2.9
+    }
+  ]
+}

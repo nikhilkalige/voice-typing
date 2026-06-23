@@ -26,8 +26,10 @@ def _get(section: str, key: str, default):
 
 
 # Push-to-talk chord — see docs/adr/0002
-PTT_KEYSYM: str = _get("ptt", "keysym", "t")    # X keysym name: "t", "F13", "space", …
-PTT_MODS: str   = _get("ptt", "mods", "alt")    # comma list: "alt", "alt,ctrl", …
+# PTT_KEYSYM: str = _get("ptt", "keysym", "t")    # X keysym name: "t", "F13", "space", …
+# PTT_MODS: str   = _get("ptt", "mods", "alt")    # comma list: "alt", "alt,ctrl", …
+PTT_KEYSYM: str = _get("ptt", "keysym", "F14")    # X keysym name: "t", "F13", "space", …
+PTT_MODS: str   = _get("ptt", "mods", "")    # comma list: "alt", "alt,ctrl", …
 TOGGLE: bool    = _get("ptt", "toggle", True)   # True = tap to start/stop; False = hold
 
 # Recognition engine
@@ -42,10 +44,20 @@ STREAMING: bool   = _get("whisper", "streaming", True)
 TICK_MS: int      = _get("whisper", "tick_ms", 450)
 
 # Parakeet (parakeet.cpp via ctypes — ggml/GGUF, GPU, no torch)
-PARAKEET_LIB: str   = _get("parakeet", "lib",
-    str(_PROJECT_ROOT / "parakeet-v0.3.2-lib-linux-cuda-x64" / "libparakeet.so"))
-PARAKEET_MODEL: str = _get("parakeet", "model",
-    str(_PROJECT_ROOT / "models" / "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"))
+PARAKEET_LIB: str   = (
+    os.environ.get("VOICETYPE_PARAKEET_LIB")
+    or _get("parakeet", "lib",
+        str(_PROJECT_ROOT / "parakeet-v0.3.2-lib-linux-cuda-x64" / "libparakeet.so"))
+)
+
+_xdg_cache = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
+CACHE_DIR: Path = Path(_xdg_cache) / "voicetype"
+DEFAULT_MODEL_NAME = "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"
+
+PARAKEET_MODEL: str = (
+    os.environ.get("VOICETYPE_PARAKEET_MODEL")
+    or _get("parakeet", "model", str(CACHE_DIR / DEFAULT_MODEL_NAME))
+)
 
 # Audio
 SAMPLE_RATE: int = 16_000   # fixed: what both engines expect

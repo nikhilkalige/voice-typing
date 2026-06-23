@@ -34,19 +34,60 @@ CASES = [
     ("samples/coding.wav",   "error handling"),
 ]
 
-# FIFO that module-pipe-source reads from to produce the virtmic source.
-# Inject audio by writing raw s16le 16000Hz mono PCM to this path.
 VIRTMIC_FIFO = "/tmp/virtmic"
+VIRTMIC_SOURCE = "virtmic"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Parses the final typed text out of "session #N end   [Xs] 'text'" log lines.
 _SESSION_END_RE = re.compile(r"session #(\d+) end\s+\[.*?\] '(.*)'")
 
 
-def _write_test_config(path: str, dotool_pipe: str) -> None:
+def _ensure_virtmic() -> tuple[str | None, str | None]:
+    """Load the virtmic pipe-source if absent and make it the default source.
+
+    Returns (module_id, prev_default) so the caller can restore the original
+    state on teardown.  Either value may be None if no change was needed.
+    """
+    sources = subprocess.run(
+        ["pactl", "list", "sources", "short"], capture_output=True, text=True,
+    ).stdout
+    module_id = None
+    if VIRTMIC_SOURCE not in sources:
+        out = subprocess.run(
+            ["pactl", "load-module", "module-pipe-source",
+             f"source_name={VIRTMIC_SOURCE}", f"file={VIRTMIC_FIFO}",
+             "format=s16le", "rate=16000", "channels=1"],
+            capture_output=True, text=True, check=True,
+        )
+        module_id = out.stdout.strip()
+        print(f"loaded {VIRTMIC_SOURCE} pipe-source (module #{module_id})")
+
+    prev_default = subprocess.run(
+        ["pactl", "get-default-source"], capture_output=True, text=True,
+    ).stdout.strip()
+    if prev_default == VIRTMIC_SOURCE:
+        prev_default = None  # already correct, nothing to restore
+    else:
+        subprocess.run(["pactl", "set-default-source", VIRTMIC_SOURCE], check=True)
+        print(f"default source → {VIRTMIC_SOURCE}  (was {prev_default!r})")
+
+    return module_id, prev_default
+
+
+def _teardown_virtmic(module_id: str | None, prev_default: str | None) -> None:
+    if prev_default:
+        subprocess.run(["pactl", "set-default-source", prev_default], check=True)
+    if module_id:
+        subprocess.run(["pactl", "unload-module", module_id], check=True)
+
+
+def _write_test_config(path: str, dotool_pipe: str, ctrl_fifo: str) -> None:
     with open(path, "w") as f:
         f.write(f"""\
 [ptt]
+# Use ctrl+shift+t so the test daemon never conflicts with a live daemon holding alt+t.
+keysym = "t"
+mods = "ctrl,shift"
 toggle = true
 
 [engine]
@@ -55,6 +96,7 @@ name = "parakeet"
 [output]
 notify = false
 dotool_pipe = "{dotool_pipe}"
+control_fifo = "{ctrl_fifo}"
 """)
 
 
@@ -132,17 +174,18 @@ def run_case(
 
 
 def main() -> int:
+    virtmic_module, virtmic_prev_default = _ensure_virtmic()
     with tempfile.TemporaryDirectory(prefix="voicetype-test-") as tmpdir:
-        # Test dotool FIFO (needed so the daemon doesn't fail to open it, but
-        # we don't read from it — results come from the daemon log instead).
+        # Test-private FIFOs — isolated from any live daemon running in parallel.
         dotool_fifo = os.path.join(tmpdir, "dotool.pipe")
+        ctrl_fifo   = os.path.join(tmpdir, "voicetype.control")
         os.mkfifo(dotool_fifo)
 
         # Isolated XDG config
         xdg_config = os.path.join(tmpdir, "config")
         cfg_dir = os.path.join(xdg_config, "voicetype")
         os.makedirs(cfg_dir)
-        _write_test_config(os.path.join(cfg_dir, "config.toml"), dotool_fifo)
+        _write_test_config(os.path.join(cfg_dir, "config.toml"), dotool_fifo, ctrl_fifo)
 
         # Start daemon
         env = os.environ.copy()
@@ -184,9 +227,7 @@ def main() -> int:
                     time.sleep(0.05)
         threading.Thread(target=_sink_dotool, daemon=True).start()
 
-        # Locate control FIFO (created by the daemon at startup)
-        runtime_dir = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-        ctrl_fifo = os.path.join(runtime_dir, "voicetype.control")
+        # Wait for the daemon to create its control FIFO.
         for _ in range(30):
             if os.path.exists(ctrl_fifo):
                 break
@@ -204,6 +245,7 @@ def main() -> int:
         finally:
             daemon.terminate()
             daemon.wait(timeout=5)
+            _teardown_virtmic(virtmic_module, virtmic_prev_default)
 
     passed = sum(results)
     total = len(results)

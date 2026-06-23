@@ -10,16 +10,48 @@ See [`CONTEXT.md`](./CONTEXT.md) for the glossary and
 ## How it works
 
 ```
-Alt+T down ──► open mic (16 kHz mono) ──► Alt+T up ──► faster-whisper (CUDA) ──► dotool types it
+Alt+T held ──► open mic (16 kHz mono) ──► re-transcribe growing buffer every ~450 ms
+            └─► commit stable words ──► dotool types them as you speak ──► (release) final pass
 ```
 
 - **Push-to-talk chord, grabbed on X11.** The chord is grabbed with `XGrabKey`, so it's
   intercepted before the desktop/app sees it — works with any key, no "inert key" needed.
 - **On-demand mic.** The input stream (via `soundcard`/libpulse) is open only while held.
-- **One press = one utterance**, transcribed and typed as a unit (verbatim text with a
-  single leading space). Transcriptions are serialized and typed in spoken order.
+- **Streaming output (default).** While held, words are typed as they stabilise: a word is
+  committed once two consecutive transcriptions agree on it (LocalAgreement-2). Output is
+  append-only — already-typed text is never backspaced. Set `VT_STREAMING=0` to instead
+  transcribe once on release.
 - **Silence types nothing** — Silero VAD filtering drops non-speech before decoding.
 - **No voice commands** — every utterance is literal text.
+
+## Engines
+
+Two recognition engines, selected with `VT_ENGINE`:
+
+- **`whisper`** (default) — faster-whisper `large-v3-turbo` on CUDA. Whisper isn't a
+  streaming model, so words are committed via LocalAgreement-2 (two consecutive
+  transcriptions must agree) — see [`docs/adr/0003`](./docs/adr/0003-streaming-localagreement-append-only.md).
+- **`parakeet`** — NVIDIA Nemotron streaming ASR (cache-aware FastConformer-RNNT) via
+  [parakeet.cpp](https://github.com/mudler/parakeet.cpp), a ggml/GGUF port loaded through
+  `ctypes`. True low-latency streaming on the GPU with **no PyTorch and no subprocess**; it
+  returns already-finalised text, so typing is append-only by construction — see
+  [`docs/adr/0004`](./docs/adr/0004-nemotron-streaming-via-parakeet-cpp.md).
+
+The parakeet engine needs two artifacts (not pulled by `uv sync`):
+
+1. The prebuilt CUDA library bundle in `parakeet-v0.3.2-lib-linux-cuda-x64/` (the `.so`
+   ships its own CUDA 13 runtime via `RUNPATH=$ORIGIN`; needs an NVIDIA driver that
+   supports CUDA 13). Override the path with `VT_PARAKEET_LIB`.
+2. The GGUF model. Default is `nvidia/nemotron-3.5-asr-streaming-0.6b` (q8_0):
+   ```bash
+   uv run python -c "from huggingface_hub import hf_hub_download; \
+     hf_hub_download('mudler/parakeet-cpp-gguf', \
+       'nemotron-3.5-asr-streaming-0.6b-q8_0.gguf', local_dir='models')"
+   ```
+   Override with `VT_PARAKEET_MODEL`. Verify the engine offline:
+   ```bash
+   uv run python tests/test_parakeet.py samples/why.wav   # loads the lib+model, streams a clip
+   ```
 
 ## Requirements
 
@@ -42,7 +74,19 @@ Ensure `dotoold` is running (it owns the uinput device); the script talks to `do
 which connects to that daemon.
 
 No keyboard remap is required — the default trigger is **Alt+T**. If another app already
-owns Alt+T, pick a different chord (see config below).
+owns Alt+T, change `[ptt] keysym` and `mods` in the config file.
+
+## Configuration
+
+Configuration is read from `~/.config/voicetype/config.toml` (or
+`$XDG_CONFIG_HOME/voicetype/config.toml`). Copy the reference file and edit:
+
+```bash
+mkdir -p ~/.config/voicetype
+cp deploy/config.toml ~/.config/voicetype/config.toml
+```
+
+All keys are optional — unset keys use the defaults shown in `deploy/config.toml`.
 
 ## Run it
 
@@ -53,29 +97,16 @@ Foreground (debugging):
 
 As a user service (always-on):
 ```bash
-cp voice-typing.service ~/.config/systemd/user/
+cp deploy/voice-typing.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now voice-typing.service
 journalctl --user -u voice-typing -f
 ```
 
-## Configuration (environment variables)
-
-| Var | Default | Meaning |
-|---|---|---|
-| `VT_PTT_KEYSYM` | `t` | key of the chord (X keysym name, e.g. `t`, `F13`, `space`) |
-| `VT_PTT_MODS` | `alt` | modifiers, comma-separated: `alt,ctrl,shift,super` (empty for a bare key) |
-| `VT_MODEL` | `large-v3-turbo` | Whisper model |
-| `VT_COMPUTE_TYPE` | `float16` | CTranslate2 compute type |
-| `VT_LANGUAGE` | `en` | pinned language |
-| `VT_TAIL_MS` | `120` | extra ms recorded after release |
-| `VT_NOTIFY` | `1` | desktop notifications on/off |
-| `DOTOOL_PIPE` | `/tmp/dotool-pipe` | FIFO that `dotoold` reads (we write `type` actions here) |
-
 ## Troubleshooting
 
-- **`could not grab alt+t`** — another app already owns the chord; set `VT_PTT_MODS` /
-  `VT_PTT_KEYSYM` to a free combo.
+- **`could not grab alt+t`** — another app already owns the chord; change `[ptt] mods` /
+  `keysym` in `~/.config/voicetype/config.toml`.
 - **`cannot connect to X display`** — you're not on X11, or `DISPLAY` isn't set in the
   service environment.
 - **`Could not load libcudnn…`** — run via `./run.sh`, which sets `LD_LIBRARY_PATH` to the
@@ -87,8 +118,31 @@ journalctl --user -u voice-typing -f
 - **First word clipped** — expected trade-off of on-demand capture; use a brief
   "press, beat, speak" rhythm, or raise `VT_TAIL_MS` / add pre-roll later.
 
+## Tests & debugging
+
+```bash
+uv run python tests/test_localagreement.py   # whisper commit logic (no GPU/X/keystrokes)
+uv run python tests/test_finalize_gpu.py     # whisper finalize-after-partial regression (GPU + sample)
+uv run python tests/test_parakeet.py         # parakeet engine: load lib+model, stream a clip (GPU)
+uv run python tools/parakeet_probe.py samples/why.wav en   # raw streaming events + timing
+```
+
+Reproduce a transcription offline without touching the mic, using TTS with known text:
+
+```bash
+# generate a deterministic sample in an isolated env (heavy deps never hit the runtime venv)
+uv run --isolated --with kokoro --with "misaki[en]" python tools/tts_sample.py \
+    "why is the typing not working at all" why
+# or record one from the mic instead:
+uv run python tools/record_sample.py why 6
+# then watch the streaming commit progression tick by tick:
+uv run python tools/replay_sample.py samples/why.wav
+```
+
 ## Roadmap
 
 - Wayland support (evdev or compositor-specific global capture).
-- Phase 2: streaming partial results (VAD-chunked, LocalAgreement-style incremental
-  commits) so words appear as you speak instead of after you release.
+- Tune Whisper streaming latency/stability (cadence, beam size, prompt window).
+- Parakeet: swap in the English-only `nemotron-speech-streaming-en-0.6b` (no `<locale>`
+  tag, lower latency); build `libparakeet.so` from source instead of the vendored bundle.
+- Wire the `moonshine` engine value (currently only `whisper`/`parakeet`).

@@ -1,0 +1,70 @@
+{
+  "text": "Can you schedule a meeting for next Tuesday at three in the afternoon",
+  "tokens": [
+    {
+      "text": "Can",
+      "start": 0.25,
+      "end": 0.3625
+    },
+    {
+      "text": "you",
+      "start": 0.3625,
+      "end": 0.475
+    },
+    {
+      "text": "schedule",
+      "start": 0.475,
+      "end": 0.8375
+    },
+    {
+      "text": "a",
+      "start": 0.8375,
+      "end": 0.9
+    },
+    {
+      "text": "meeting",
+      "start": 0.9,
+      "end": 1.25
+    },
+    {
+      "text": "for",
+      "start": 1.25,
+      "end": 1.3625
+    },
+    {
+      "text": "next",
+      "start": 1.3625,
+      "end": 1.625
+    },
+    {
+      "text": "Tuesday",
+      "start": 1.625,
+      "end": 2.075
+    },
+    {
+      "text": "at",
+      "start": 2.075,
+      "end": 2.2375
+    },
+    {
+      "text": "three",
+      "start": 2.2375,
+      "end": 2.6625
+    },
+    {
+      "text": "in",
+      "start": 2.6625,
+      "end": 2.7625
+    },
+    {
+      "text": "the",
+      "start": 2.7625,
+      "end": 2.85
+    },
+    {
+      "text": "afternoon",
+      "start": 2.85,
+      "end": 3.7
+    }
+  ]
+}

@@ -888,24 +888,28 @@ wheels = [
 [[package]]
 name = "voice-typing"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
-    { name = "faster-whisper" },
-    { name = "moonshine-voice" },
     { name = "numpy" },
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cudnn-cu12" },
     { name = "python-xlib" },
     { name = "soundcard" },
 ]
 
+[package.optional-dependencies]
+whisper = [
+    { name = "faster-whisper" },
+    { name = "moonshine-voice" },
+    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cudnn-cu12" },
+]
+
 [package.metadata]
 requires-dist = [
-    { name = "faster-whisper", specifier = ">=1.1.0" },
-    { name = "moonshine-voice", specifier = ">=0.0.62" },
+    { name = "faster-whisper", marker = "extra == 'whisper'", specifier = ">=1.1.0" },
+    { name = "moonshine-voice", marker = "extra == 'whisper'", specifier = ">=0.0.62" },
     { name = "numpy", specifier = ">=2.0.0" },
-    { name = "nvidia-cublas-cu12", specifier = ">=12.3" },
-    { name = "nvidia-cudnn-cu12", specifier = ">=9.0" },
+    { name = "nvidia-cublas-cu12", marker = "extra == 'whisper'", specifier = ">=12.3" },
+    { name = "nvidia-cudnn-cu12", marker = "extra == 'whisper'", specifier = ">=9.0" },
     { name = "python-xlib", specifier = ">=0.33" },
     { name = "soundcard", specifier = ">=0.4.3" },
 ]

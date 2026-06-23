@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Status</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: transparent;
+    color: #e0e0e0;
+    width: 340px;
+    user-select: none;
+    cursor: default;
+  }
+
+  #widget {
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    min-height: 100px;
+    position: relative;
+  }
+
+  #header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  #status-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #666;
+    transition: background 0.3s;
+    flex-shrink: 0;
+  }
+
+  #status-dot.recording {
+    background: #e74c3c;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  #status-dot.transcribing {
+    background: #f39c12;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 8px rgba(231, 76, 60, 0); }
+  }
+
+  #status-text {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  #details {
+    font-size: 12px;
+    color: #888;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #elapsed {
+    font-variant-numeric: tabular-nums;
+  }
+
+  #last-text {
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: right;
+  }
+
+  #last-text:empty::after {
+    content: '—';
+    color: #555;
+  }
+
+  #settings-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px;
+    border-radius: 4px;
+    transition: color 0.2s;
+  }
+
+  #settings-btn:hover {
+    color: #aaa;
+  }
+
+  /* Modal */
+  #modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+  }
+
+  #modal-overlay.active {
+    display: flex;
+  }
+
+  #modal {
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 24px;
+    min-width: 300px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  }
+
+  #modal h2 {
+    font-size: 16px;
+    margin-bottom: 16px;
+    color: #e0e0e0;
+  }
+
+  .form-group {
+    margin-bottom: 12px;
+  }
+
+  .form-group label {
+    display: block;
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 4px;
+  }
+
+  .form-group input {
+    width: 100%;
+    padding: 8px 12px;
+    background: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+  }
+
+  .form-group input:focus {
+    outline: none;
+    border-color: #555;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-primary {
+    background: #3498db;
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: #2980b9;
+  }
+
+  .btn-secondary {
+    background: #333;
+    color: #ccc;
+  }
+
+  .btn-secondary:hover {
+    background: #444;
+  }
+
+  .btn-test {
+    background: #27ae60;
+    color: white;
+  }
+
+  .btn-test:hover {
+    background: #219a52;
+  }
+
+  #test-hint {
+    font-size: 11px;
+    color: #666;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<div id="widget">
+  <button id="settings-btn" title="Settings">⚙</button>
+  <div id="header">
+    <div id="status-dot"></div>
+    <span id="status-text">Disconnected</span>
+  </div>
+  <div id="details">
+    <span id="elapsed"></span>
+    <span id="last-text"></span>
+  </div>
+</div>
+
+<div id="modal-overlay">
+  <div id="modal">
+    <h2>Settings</h2>
+    <div class="form-group">
+      <label for="state-file">State file path</label>
+      <input type="text" id="state-file" placeholder="/tmp/voicetype-state.json">
+    </div>
+    <div class="form-group">
+      <label for="poll-interval">Poll interval (ms)</label>
+      <input type="number" id="poll-interval" placeholder="500" min="100" max="5000">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-test" id="test-btn">Test</button>
+      <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="save-btn">Save</button>
+    </div>
+    <div id="test-hint">Test writes sample data to the state file</div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const DEFAULT_STATE_FILE = '/tmp/voicetype-state.json';
+  const DEFAULT_POLL_MS = 500;
+
+  let stateFile = localStorage.getItem('vt_state_file') || DEFAULT_STATE_FILE;
+  let pollInterval = parseInt(localStorage.getItem('vt_poll_interval')) || DEFAULT_POLL_MS;
+  let timer = null;
+
+  // Elements
+  const dot = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+  const elapsed = document.getElementById('elapsed');
+  const lastText = document.getElementById('last-text');
+  const modal = document.getElementById('modal-overlay');
+  const settingsBtn = document.getElementById('settings-btn');
+  const saveBtn = document.getElementById('save-btn');
+  const cancelBtn = document.getElementById('cancel-btn');
+  const testBtn = document.getElementById('test-btn');
+  const stateFileInput = document.getElementById('state-file');
+  const pollIntervalInput = document.getElementById('poll-interval');
+
+  function updateUI(data) {
+    if (!data || !data.state) {
+      setStatus('disconnected');
+      return;
+    }
+
+    const state = data.state;
+    dot.className = '';
+    if (state === 'recording') {
+      dot.classList.add('recording');
+      setStatus('recording');
+      elapsed.textContent = formatTime(data.elapsed || 0);
+      lastText.textContent = data.last_text || '';
+    } else if (state === 'transcribing') {
+      dot.classList.add('transcribing');
+      setStatus('transcribing');
+      elapsed.textContent = formatTime(data.elapsed || 0);
+      lastText.textContent = data.last_text || '';
+    } else {
+      setStatus('idle');
+      elapsed.textContent = '';
+      lastText.textContent = data.last_text || '';
+    }
+  }
+
+  function setStatus(state) {
+    switch(state) {
+      case 'recording':
+        statusText.textContent = 'Recording';
+        break;
+      case 'transcribing':
+        statusText.textContent = 'Transcribing';
+        break;
+      case 'idle':
+        statusText.textContent = 'Ready';
+        break;
+      default:
+        statusText.textContent = 'Disconnected';
+    }
+  }
+
+  function formatTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function poll() {
+    // Using fetch won't work for file:// protocol, so we use a simple approach
+    // In a browser context, we'd need a local server or use XHR
+    // For now, this is a placeholder that works with a local HTTP server
+    fetch(stateFile, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => updateUI(data))
+      .catch(() => {
+        // File doesn't exist or error - show disconnected
+        if (dot.className === '') {
+          setStatus('disconnected');
+        }
+      });
+  }
+
+  function startPolling() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(poll, pollInterval);
+    poll(); // Immediate first poll
+  }
+
+  // Settings modal
+  settingsBtn.addEventListener('click', () => {
+    stateFileInput.value = stateFile;
+    pollIntervalInput.value = pollInterval;
+    modal.classList.add('active');
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    modal.classList.remove('active');
+  });
+
+  saveBtn.addEventListener('click', () => {
+    stateFile = stateFileInput.value || DEFAULT_STATE_FILE;
+    pollInterval = parseInt(pollIntervalInput.value) || DEFAULT_POLL_MS;
+    localStorage.setItem('vt_state_file', stateFile);
+    localStorage.setItem('vt_poll_interval', pollInterval);
+    modal.classList.remove('active');
+    startPolling();
+  });
+
+  testBtn.addEventListener('click', () => {
+    // Write test data - this requires the state file to be writable
+    // In a real scenario, voicetype.py would write this file
+    const testData = {
+      state: 'recording',
+      elapsed: 12.4,
+      last_text: 'hello world test'
+    };
+    // Note: Direct file writing from browser isn't possible,
+    // this is just for demonstration
+    updateUI(testData);
+    alert('Test data applied. In production, voicetype.py would write this to the state file.');
+  });
+
+  // Close modal on overlay click
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.classList.remove('active');
+    }
+  });
+
+  // Start
+  startPolling();
+})();
+</script>
+</body>
+</html>
